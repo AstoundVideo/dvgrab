@@ -165,6 +165,7 @@ private:
 	int m_bandwidth;
 	int m_outputPort;
 	int m_inputPort;
+	bool m_connected;
 
 public:
 
@@ -175,6 +176,10 @@ public:
 	int GetChannel( void ) const
 	{
 		return m_channel;
+	}
+	bool IsConnected( void ) const
+	{
+		return m_connected;
 	}
 	int Reconnect( void );
 };

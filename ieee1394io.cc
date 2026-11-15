@@ -470,23 +470,21 @@ void iec61883Reader::Close()
 
 bool iec61883Reader::StartReceive()
 {
-	bool success;
-
 	/* Starting iso receive */
-	try
+	errno = 0;
+	int ret = isHDV
+		? iec61883_mpeg2_recv_start( m_iec61883_mpeg2, channel )
+		: iec61883_dv_fb_start( m_iec61883_dv, channel );
+	if ( ret < 0 )
 	{
-		if ( isHDV )
-			fail_neg( iec61883_mpeg2_recv_start( m_iec61883_mpeg2, channel ) );
+		int err = errno;
+		if ( err != 0 )
+			sendEvent( "Error starting iso receive on channel %d: %s (errno %d)", channel, strerror( err ), err );
 		else
-			fail_neg( iec61883_dv_fb_start( m_iec61883_dv, channel ) );
-		success = true;
+			sendEvent( "Error starting iso receive on channel %d (returned %d)", channel, ret );
+		return false;
 	}
-	catch ( string exc )
-	{
-		sendEvent( exc.c_str() );
-		success = false;
-	}
-	return success;
+	return true;
 }
 
 
@@ -617,7 +615,7 @@ void* iec61883Reader::Thread()
 
 iec61883Connection::iec61883Connection( int port, int node ) :
 	m_node( node | 0xffc0 ), m_channel( -1 ), m_bandwidth( 0 ),
-	m_outputPort( -1 ), m_inputPort( -1 )
+	m_outputPort( -1 ), m_inputPort( -1 ), m_connected( false )
 {
 	m_handle = raw1394_new_handle_on_port( port );
 	if ( m_handle )
@@ -626,6 +624,8 @@ iec61883Connection::iec61883Connection( int port, int node ) :
 			raw1394_get_local_id( m_handle ), &m_inputPort, &m_bandwidth );
 		if ( m_channel < 0 )
 			m_channel = 63;
+		else
+			m_connected = true;
 	}
 }
 
@@ -633,9 +633,12 @@ iec61883Connection::~iec61883Connection( )
 {
 	if ( m_handle )
 	{
-		iec61883_cmp_disconnect( m_handle, m_node, m_outputPort,
-			raw1394_get_local_id (m_handle), m_inputPort,
-			m_channel, m_bandwidth );
+		if ( m_connected )
+		{
+			iec61883_cmp_disconnect( m_handle, m_node, m_outputPort,
+				raw1394_get_local_id (m_handle), m_inputPort,
+				m_channel, m_bandwidth );
+		}
 		raw1394_destroy_handle( m_handle );
 	}
 }

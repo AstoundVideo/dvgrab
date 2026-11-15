@@ -27,10 +27,6 @@ extern "C"
 {
 #endif
 
-#define fail_neg(eval)  real_fail_neg  (eval, #eval, __ASSERT_FUNCTION, __FILE__, __LINE__)
-#define fail_null(eval) real_fail_null (eval, #eval, __ASSERT_FUNCTION, __FILE__, __LINE__)
-#define fail_if(eval)   real_fail_if   (eval, #eval, __ASSERT_FUNCTION, __FILE__, __LINE__)
-
 extern bool d_all;
 extern bool d_hdv_pat;
 extern bool d_hdv_pmt;
@@ -50,12 +46,17 @@ bool d_hdv_pid_check( int p );
 #define sendEvent( msg... ) sendEventParams( 2, 1, msg )
 
 void sendEventParams( int clearline, int newline, const char *format, ... );
-void real_fail_neg ( int eval, const char * eval_str, const char * func, const char * file, int line );
-void real_fail_null ( const void * eval, const char * eval_str, const char * func, const char * file, int line );
-void real_fail_if ( bool eval, const char * eval_str, const char * func, const char * file, int line );
 
 #ifdef __cplusplus
 }
 #endif
+
+#define fail_neg(eval)  real_fail_neg  (eval, #eval, __ASSERT_FUNCTION, __FILE__, __LINE__)
+#define fail_null(eval) real_fail_null (eval, #eval, __ASSERT_FUNCTION, __FILE__, __LINE__)
+#define fail_if(eval)   real_fail_if   (eval, #eval, __ASSERT_FUNCTION, __FILE__, __LINE__)
+
+void real_fail_neg ( int eval, const char * eval_str, const char * func, const char * file, int line );
+void real_fail_null ( const void * eval, const char * eval_str, const char * func, const char * file, int line );
+void real_fail_if ( bool eval, const char * eval_str, const char * func, const char * file, int line );
 
 #endif

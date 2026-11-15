@@ -128,9 +128,32 @@ DVgrab::DVgrab( int argc, char *argv[] ) :
 		
 		if ( m_guid )
 		{
+			int requestedChannel = m_channel;
 			m_connection = new iec61883Connection( m_port, m_node );
 			if ( ! m_connection )
+			{
+				delete m_avc;
+				m_avc = 0;
+				if ( m_dst_file_name )
+				{
+					free( m_dst_file_name );
+					m_dst_file_name = 0;
+				}
 				throw std::string( "failed to establish isochronous connection" );
+			}
+			if ( ! m_connection->IsConnected() && requestedChannel != DEFAULT_CHANNEL )
+			{
+				delete m_connection;
+				m_connection = 0;
+				delete m_avc;
+				m_avc = 0;
+				if ( m_dst_file_name )
+				{
+					free( m_dst_file_name );
+					m_dst_file_name = 0;
+				}
+				throw std::string( "failed to establish connection on requested channel (no online plugs)" );
+			}
 			m_channel = m_connection->GetChannel();
 			sendEvent( "Established connection over channel %d", m_channel );
 		}
@@ -152,8 +175,22 @@ DVgrab::DVgrab( int argc, char *argv[] ) :
 
 	if ( m_reader )
 	{
+		if ( ! m_reader->StartThread() )
+		{
+			delete m_reader;
+			m_reader = 0;
+			delete m_avc;
+			m_avc = 0;
+			delete m_connection;
+			m_connection = 0;
+			if ( m_dst_file_name )
+			{
+				free( m_dst_file_name );
+				m_dst_file_name = 0;
+			}
+			throw std::string( "failed to start IEEE1394 receiver" );
+		}
 		pthread_create( &capture_thread, NULL, captureThread, this );
-		m_reader->StartThread();
 	}
 }
 
