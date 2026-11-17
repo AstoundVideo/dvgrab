@@ -860,6 +860,7 @@ void DVgrab::writeFrame()
 	     ( ( float )m_total_frames++ / m_frame->GetFrameRate() * 1000.0 + 0.5 ) >=
 	     m_timeDuration->getResolvedOffset() )
 	{
+		sendEvent( "Stopping capture: requested duration reached" );
 		pthread_mutex_unlock( &capture_mutex );
 		stopCapture();
 		m_reader_active = false;
@@ -1010,8 +1011,11 @@ void DVgrab::captureThreadRun()
 
 		// Get the next frame
 		if ( ( m_frame = m_reader->GetFrame() ) == NULL )
+		{
+			sendEvent( "Stopping capture: reader returned NULL (end of stream or error)" );
 			// reader has erred or signaling a stop condition (end of pipe)
 			break;
+		}
 
 		// Check if the out queue is falling behind
 		bool critical_mass = m_reader->GetOutQueueSize( ) > m_reader->GetInQueueSize( );
@@ -1334,7 +1338,10 @@ bool DVgrab::done()
 			m_transportStatus = m_avc->TransportStatus( m_node );
 			if ( AVC1394_MASK_RESPONSE_OPERAND( m_transportStatus, 3 ) == AVC1394_VCR_OPERAND_WIND_STOP
 			     && AVC1394_MASK_OPCODE( m_transportStatus ) == AVC1394_VCR_RESPONSE_TRANSPORT_STATE_WIND )
-			return true;
+			{
+				sendEvent( "Stopping capture: AVC transport reported WIND_STOP" );
+				return true;
+			}
 		}
 		
 		timespec t = {0, 125000000L};

@@ -132,6 +132,8 @@ int main( int argc, char *argv[] )
 			while ( !g_done )
 				if ( dvgrab.done() )
 					break;
+			if ( g_done )
+				fprintf( stderr, "Stopping capture: received termination signal (%d)\n", ( int )g_done );
 			dvgrab.stopCapture();
 		}
 	}
