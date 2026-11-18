@@ -675,8 +675,8 @@ void DVgrab::startCapture()
 		m_captureActive = true;
 		m_total_frames = 0;
 
-		// parse the SMIL time value duration
-		if ( m_timeDuration == NULL && ! m_duration.empty() )
+		// parse the SMIL time value duration once frame rate is known
+		if ( m_timeDuration == NULL && ! m_duration.empty() && m_frame->GetFrameRate() > 0 )
 			m_timeDuration = new SMIL::MediaClippingTime( m_duration, m_frame->GetFrameRate() );
 
 		if ( m_dst_file_name )
@@ -713,7 +713,7 @@ void DVgrab::stopCapture()
 		{
 			TimeCode timeCode;
 			struct tm recDate;
-			m_frame->GetTimeCode( timeCode );
+			bool hasTimeCode = m_frame->GetTimeCode( timeCode );
 			if ( ! m_frame->GetRecordingDate( recDate ) )
 			{
 				// If the month is invalid, then report system date/time
@@ -721,12 +721,23 @@ void DVgrab::stopCapture()
 				time( &timesys );
 				localtime_r( &timesys, &recDate );
 			}
-			sendEvent( "\"%s\": %8.2f MiB %d frames timecode %2.2d:%2.2d:%2.2d.%2.2d date %4.4d.%2.2d.%2.2d %2.2d:%2.2d:%2.2d",
-			           filename.c_str(), size, frames,
-			           timeCode.hour, timeCode.min, timeCode.sec, timeCode.frame,
-			           recDate.tm_year + 1900, recDate.tm_mon + 1, recDate.tm_mday,
-			           recDate.tm_hour, recDate.tm_min, recDate.tm_sec
-			         );
+			if ( hasTimeCode )
+			{
+				sendEvent( "\"%s\": %8.2f MiB %d frames timecode %2.2d:%2.2d:%2.2d.%2.2d date %4.4d.%2.2d.%2.2d %2.2d:%2.2d:%2.2d",
+				           filename.c_str(), size, frames,
+				           timeCode.hour, timeCode.min, timeCode.sec, timeCode.frame,
+				           recDate.tm_year + 1900, recDate.tm_mon + 1, recDate.tm_mday,
+				           recDate.tm_hour, recDate.tm_min, recDate.tm_sec
+				         );
+			}
+			else
+			{
+				sendEvent( "\"%s\": %8.2f MiB %d frames timecode ??:??:??.?? date %4.4d.%2.2d.%2.2d %2.2d:%2.2d:%2.2d",
+				           filename.c_str(), size, frames,
+				           recDate.tm_year + 1900, recDate.tm_mon + 1, recDate.tm_mday,
+				           recDate.tm_hour, recDate.tm_min, recDate.tm_sec
+				         );
+			}
 		}
 		else
 			sendEvent( "\"%s\" %8.2f MiB %d frames", filename.c_str(), size, frames );
@@ -855,9 +866,13 @@ void DVgrab::writeFrame()
 	// All access to the writer is protected
 	pthread_mutex_lock( &capture_mutex );
 
+	float frameRate = m_frame->GetFrameRate();
+	if ( m_timeDuration == NULL && ! m_duration.empty() && frameRate > 0 )
+		m_timeDuration = new SMIL::MediaClippingTime( m_duration, frameRate );
+
 	// see if we have exceeded requested duration
-	if ( m_timeDuration && m_timeDuration->isResolved() &&
-	     ( ( float )m_total_frames++ / m_frame->GetFrameRate() * 1000.0 + 0.5 ) >=
+	if ( m_timeDuration && m_timeDuration->isResolved() && frameRate > 0 &&
+	     ( ( float )m_total_frames++ / frameRate * 1000.0 + 0.5 ) >=
 	     m_timeDuration->getResolvedOffset() )
 	{
 		sendEvent( "Stopping capture: requested duration reached" );

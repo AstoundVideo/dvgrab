@@ -568,9 +568,11 @@ void MediaClippingTime::parseSmpteValue( string time )
 	}
 	
 	//cerr << "hh = " << hours << ", mm = " << minutes << ", ss = " << seconds << ", ff = " << frames << endl;
+	long frameOffsetMs = ( m_framerate > 0.0f )
+	    ? ( long )( atof( frames.c_str() ) / m_framerate * 1000 + 0.5 )
+	    : 0L;
 	timeValue = ( atol( hours.c_str() ) * 3600 + atol( minutes.c_str() ) * 60 +
-				  atol( seconds.c_str() ) ) * 1000 + 
-				  ( long )( atof( frames.c_str() ) / m_framerate * 1000 + 0.5 );
+				  atol( seconds.c_str() ) ) * 1000 + frameOffsetMs;
 
 	resolved = true;
 	indefinite = false;
