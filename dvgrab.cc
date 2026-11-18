@@ -35,6 +35,7 @@ using std::endl;
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include <math.h>
 #include <time.h>
 #include <string.h>
 #include <sys/select.h>
@@ -77,8 +78,15 @@ DVgrab::DVgrab( int argc, char *argv[] ) :
 		m_captureActive( false ), m_avc( 0 ), m_reader( 0 ), m_hdv( false ), m_showstatus( false ),
 		m_isLastTimeCodeSet( false ), m_isLastRecDateSet( false ), m_v4l2( false ), m_jvc_p25( false ),
 		m_24p( false ), m_24pa( false ), m_isRecordMode( false ), m_isRewindFirst( false ),
+		m_audio_levels_interval_ms( 0 ), m_audio_meter_buf( NULL ),
+		m_audio_channels_seen( 0 ), m_audio_last_emit_set( false ),
 		m_timeSplit(0), m_srt( false ), m_isNewFile(false)
 {
+	m_audio_sum_sq[0] = m_audio_sum_sq[1] = 0;
+	m_audio_peak[0] = m_audio_peak[1] = 0;
+	m_audio_sample_count[0] = m_audio_sample_count[1] = 0;
+	m_audio_last_emit.tv_sec = 0;
+	m_audio_last_emit.tv_nsec = 0;
 	m_frame = 0;
 	m_writer = 0;
 	m_input_file_name = NULL;
@@ -197,6 +205,11 @@ DVgrab::DVgrab( int argc, char *argv[] ) :
 DVgrab::~DVgrab()
 {
 	cleanup();
+	if ( m_audio_meter_buf )
+	{
+		free( m_audio_meter_buf );
+		m_audio_meter_buf = NULL;
+	}
 }
 
 void DVgrab::print_usage()
@@ -218,6 +231,7 @@ void DVgrab::print_help()
 	cerr << "Options:" << endl << endl;
 	cerr << "  -a[n],-autosplit[=n] start a new file when a new recording is detected" << endl;
 	cerr << "                         or if n is supplied, after n seconds gap in recording date/time" << endl;
+	cerr << "  -audio-levels[=ms]   periodically emit DV L/R audio RMS and peak dBFS [default 250ms]" << endl;
 	cerr << "  -buffers number      the number of internal frames to buffer [default " << DEFAULT_BUFFERS << "]" << endl;
 	cerr << "  -card number         card number [default automatic]" << endl;
 	cerr << "  -channel number      iso channel number for listening [default " << DEFAULT_CHANNEL << "]" << endl;
@@ -354,6 +368,7 @@ void DVgrab::getargs( int argc, char *argv[] )
 	int c;
 	struct option long_opts[] = {
 		// all these use sscanf for int conversion, use val == 0xff to indicate
+		{ "audio-levels", optional_argument, 0, 0 },
 		{ "autosplit", optional_argument, 0, 'a' },
 		{ "buffers", required_argument, &m_buffers, 0xff },
 		{ "card", required_argument, &m_port, 0xff },
@@ -468,6 +483,15 @@ void DVgrab::getargs( int argc, char *argv[] )
 					m_input_file_name = "-";
 				else if ( strcmp( "duration", name ) == 0 )
 					m_duration = optarg;
+				else if ( strcmp( "audio-levels", name ) == 0 )
+				{
+					int interval = optarg ? atoi( optarg ) : 250;
+					if ( interval < 50 )
+						interval = 50;
+					else if ( interval > 10000 )
+						interval = 10000;
+					m_audio_levels_interval_ms = interval;
+				}
 			}
 			break;
 		case 'a':
@@ -840,6 +864,97 @@ void *DVgrab::captureThread( void *arg )
 	return NULL;
 }
 
+static double sampleToDb( double val )
+{
+	if ( val <= 0.0 )
+		return -96.0;
+	double db = 20.0 * log10( val / 32768.0 );
+	if ( db < -96.0 )
+		return -96.0;
+	if ( db > 0.0 )
+		return 0.0;
+	return db;
+}
+
+void DVgrab::updateAudioMeters( DVFrame *dvframe )
+{
+	if ( !dvframe )
+		return;
+	if ( !m_audio_meter_buf )
+	{
+		m_audio_meter_buf = (int16_t *) malloc( 4 * DV_AUDIO_MAX_SAMPLES * sizeof( int16_t ) );
+		if ( !m_audio_meter_buf )
+			return;
+	}
+
+	dvframe->ExtractHeader();
+	AudioInfo info;
+	if ( !dvframe->GetAudioInfo( info ) || info.samples <= 0 || info.channels <= 0 )
+		return;
+	if ( info.samples > DV_AUDIO_MAX_SAMPLES || info.channels > 4 )
+		return;
+
+	int bytes = dvframe->ExtractAudio( (void *) m_audio_meter_buf );
+	int expected_bytes = info.samples * info.channels * (int) sizeof( int16_t );
+	if ( bytes < expected_bytes )
+		return;
+
+	int ch = info.channels;
+	m_audio_channels_seen = ch;
+	for ( int n = 0; n < info.samples; ++n )
+	{
+		int16_t s0 = m_audio_meter_buf[ n * ch ];
+		int a0 = s0 < 0 ? -(int) s0 : (int) s0;
+		if ( a0 > m_audio_peak[0] )
+			m_audio_peak[0] = a0;
+		m_audio_sum_sq[0] += (int64_t) s0 * (int64_t) s0;
+		m_audio_sample_count[0]++;
+
+		if ( ch >= 2 )
+		{
+			int16_t s1 = m_audio_meter_buf[ n * ch + 1 ];
+			int a1 = s1 < 0 ? -(int) s1 : (int) s1;
+			if ( a1 > m_audio_peak[1] )
+				m_audio_peak[1] = a1;
+			m_audio_sum_sq[1] += (int64_t) s1 * (int64_t) s1;
+			m_audio_sample_count[1]++;
+		}
+	}
+
+	struct timespec now;
+	clock_gettime( CLOCK_MONOTONIC, &now );
+	if ( !m_audio_last_emit_set )
+	{
+		m_audio_last_emit = now;
+		m_audio_last_emit_set = true;
+		return;
+	}
+
+	long elapsed_ms = ( now.tv_sec - m_audio_last_emit.tv_sec ) * 1000L
+		+ ( now.tv_nsec - m_audio_last_emit.tv_nsec ) / 1000000L;
+	if ( elapsed_ms >= m_audio_levels_interval_ms )
+	{
+		double l_rms = m_audio_sample_count[0] > 0
+			? sqrt( (double) m_audio_sum_sq[0] / (double) m_audio_sample_count[0] )
+			: 0.0;
+		double r_rms = m_audio_sample_count[1] > 0
+			? sqrt( (double) m_audio_sum_sq[1] / (double) m_audio_sample_count[1] )
+			: 0.0;
+		double l_rms_db = sampleToDb( l_rms );
+		double l_peak_db = sampleToDb( (double) m_audio_peak[0] );
+		double r_rms_db = ch >= 2 ? sampleToDb( r_rms ) : -96.0;
+		double r_peak_db = ch >= 2 ? sampleToDb( (double) m_audio_peak[1] ) : -96.0;
+
+		sendEvent( "Audio Levels: L=%.1f,%.1f R=%.1f,%.1f ch=%d",
+			l_rms_db, l_peak_db, r_rms_db, r_peak_db, m_audio_channels_seen );
+
+		m_audio_sum_sq[0] = m_audio_sum_sq[1] = 0;
+		m_audio_peak[0] = m_audio_peak[1] = 0;
+		m_audio_sample_count[0] = m_audio_sample_count[1] = 0;
+		m_audio_last_emit = now;
+	}
+}
+
 void DVgrab::sendCaptureStatus( const char *name, float size, int frames, TimeCode *tc, struct tm *rd, bool newline )
 {
 	char tc_str[64], rd_str[128];
@@ -939,6 +1054,9 @@ void DVgrab::writeFrame()
 			stopCapture();
 			throw std::string( "writing failed" );
 		}
+
+		if ( !m_hdv && m_audio_levels_interval_ms > 0 )
+			updateAudioMeters( static_cast<DVFrame*>( m_frame ) );
 
 		m_isNewFile |= m_writer->IsNewFile();
 

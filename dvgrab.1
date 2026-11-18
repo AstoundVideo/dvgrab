@@ -99,6 +99,10 @@ Options longer than a single character can be specified with either one or two
 leading hyphens. Also, you can use a space character or equal sign to separate
 the option name and its argument value.
 
+.IP "\fB-audio-levels[=\fIms\fP]\fP" 10
+Periodically emit DV left/right PCM RMS and peak levels in dBFS to stderr
+during non-HDV capture (default interval 250 ms, clamped to 50..10000 ms).
+
 .IP "\fB-a[\fInum\fP], -autosplit[=\fInum\fP]\fP" 10
 Try to detect whenever a new recording starts, and store it
 into a separate file. This can be combined with the \fB-frames\fP and

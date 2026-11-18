@@ -114,6 +114,14 @@ private:
 	bool m_isNewFile;
 	bool m_isRecordMode;
 	int m_isRewindFirst;
+	int m_audio_levels_interval_ms;
+	int16_t *m_audio_meter_buf;
+	int64_t m_audio_sum_sq[2];
+	int m_audio_peak[2];
+	int m_audio_sample_count[2];
+	int m_audio_channels_seen;
+	struct timespec m_audio_last_emit;
+	bool m_audio_last_emit_set;
 
 	static FileHandler *m_writer;
 	bool m_captureActive;
@@ -141,6 +149,7 @@ public:
 	void status();
 	void watchdogThread();
 	void captureThreadRun();
+	void updateAudioMeters( DVFrame *dvframe );
 	bool execute( const char );
 	bool isPlaying();
 	bool isInteractive()
